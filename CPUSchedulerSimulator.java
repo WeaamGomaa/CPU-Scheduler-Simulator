@@ -34,13 +34,14 @@ public class CPUSchedulerSimulator {
         int quantumUsed;
         List<Integer> quantumHistory;
 
-        Process(String name, int arrival, int burst, int priority) {
+        Process(String name, int arrival, int burst, int priority, int quantum) {
             this.name = name;
             this.arrivalTime = arrival;
             this.burstTime = burst;
             this.remainingTime = burst;
             this.priority = priority;
-            this.quantum = 0;
+            this.quantum = quantum;
+            this.originalQuantum = quantum;
             this.quantumHistory = new ArrayList<>();
         }
 
@@ -52,7 +53,8 @@ public class CPUSchedulerSimulator {
             this.priority = other.priority;
             this.remainingTime = other.burstTime;
             this.quantum = other.quantum;
-            this.quantumHistory = new ArrayList<>();
+            this.originalQuantum = other.originalQuantum;
+            this.quantumHistory = new ArrayList<>(other.quantumHistory);
         }
 
         @Override
@@ -60,10 +62,10 @@ public class CPUSchedulerSimulator {
             return Integer.compare(this.arrivalTime, other.arrivalTime);
         }
 
-        @Override
-        public String toString() {
-            return name + " (A:" + arrivalTime + ", B:" + burstTime + ", P:" + priority + ")";
-        }
+//        @Override
+//        public String toString() {
+//            return name + " (A:" + arrivalTime + ", B:" + burstTime + ", P:" + priority + ")";
+//        }
 
     }
 
@@ -139,25 +141,45 @@ public class CPUSchedulerSimulator {
     static class AGScheduler extends Scheduler {
         // TODO: MEMBER 4 - CORE LOGIC:
         // 1. Initialize AG-specific fields for each process
+        private int AG_quantum;
+        private int AG_originalQuantum;
+        private int quntumUsed;
+        private int currentPhase;
+        private int phaseStartTime;
+        private ArrayList<Integer> quantumHistory;
         private static int FCFS_PHASE = 1;
         private static int PRIORITY_PHASE = 2;
         private static int SJF_PHASE = 3;
 
         //queue for ready processes
-        private Queue<Process> readyQueue = new LinkedList<>();
-        //for tracking quantum history for each process
+        private Queue<Process> readyQueue;
+        //for tracking quantum history for all processes
         private Map<String, List<Integer>> quantumHistories = new HashMap<>();
+
+        AGScheduler(List<Process> processes){
+            for (Process p : processes){
+                this.AG_quantum = p.quantum;
+                this.AG_originalQuantum = p.originalQuantum;
+                this.quntumUsed = 0;
+                this.currentPhase = FCFS_PHASE;
+                this.phaseStartTime = 0;
+                this.quantumHistory = new ArrayList<>(p.quantum);
+            }
+            int currentTime = 0;
+            int completedProcess = 0;
+            //Sort all processes by arrival time
+            processes.sort(Comparator.comparingInt(p -> p.arrivalTime));
+            this.readyQueue = new LinkedList<>();
+        }
 
         // 2. Implement 3-phase scheduling logic:
         //    - First 25% of quantum: FCFS (non-preemptive)
         //    - Next 25%: Non-preemptive Priority
         //    - Remaining 50%: Preemptive SJF
 
-//        SchedulerResult schedule(List<Process> processes, int contextSwitchTime){
+//        public SchedulerResult schedule(List<Process> processes, int contextSwitchTime){
 //
-//            for (Process p: processes){
 //
-//            }
 //        }
         // 3. Handle 4 scenarios when process stops:
         //    i. Used full quantum but not finished -> quantum += 2
