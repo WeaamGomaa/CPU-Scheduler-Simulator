@@ -146,6 +146,9 @@ public class CPUSchedulerSimulator {
         private int quntumUsed;
         private int currentPhase;
         private int phaseStartTime;
+        private int currentTime;
+        private int completedProcesses;
+        Process currentRunningProcess;
         private ArrayList<Integer> quantumHistory;
         private static int FCFS_PHASE = 1;
         private static int PRIORITY_PHASE = 2;
@@ -165,11 +168,45 @@ public class CPUSchedulerSimulator {
                 this.phaseStartTime = 0;
                 this.quantumHistory = new ArrayList<>(p.quantum);
             }
-            int currentTime = 0;
-            int completedProcess = 0;
+            currentTime = 0;
+            completedProcesses = 0;
             //Sort all processes by arrival time
             processes.sort(Comparator.comparingInt(p -> p.arrivalTime));
             this.readyQueue = new LinkedList<>();
+            currentRunningProcess = null;
+        }
+
+        private int calculatePhaseBoundry(int quantum, int percentage){
+            double value = (quantum * percentage) / 100.0;
+            return (int) Math.ceil(value);
+        }
+
+        public Process selectNextProcess(Queue<Process> readyQueue, AGScheduler currentProcess){
+            if(readyQueue.isEmpty()) return null;
+            else if(currentProcess != null &&(currentProcess.currentPhase == FCFS_PHASE || currentProcess.currentPhase == PRIORITY_PHASE)){
+
+            }
+        }
+
+        public int updatePhase(Process process){
+            int phase1Boundry = calculatePhaseBoundry(AG_quantum, 25);
+            int phase2Boundry = calculatePhaseBoundry(AG_quantum, 50);
+
+            if(quntumUsed < phase1Boundry){
+                return FCFS_PHASE;
+            } else if (quntumUsed < phase2Boundry){
+                return PRIORITY_PHASE;
+            } else{
+                return SJF_PHASE;
+            }
+        }
+
+        public String checkStopCondition(Process process){
+
+        }
+
+        public void handleProcessStop(Process process, Queue<Process> readyQueue, String stopReason){
+
         }
 
         // 2. Implement 3-phase scheduling logic:
@@ -177,10 +214,42 @@ public class CPUSchedulerSimulator {
         //    - Next 25%: Non-preemptive Priority
         //    - Remaining 50%: Preemptive SJF
 
-//        public SchedulerResult schedule(List<Process> processes, int contextSwitchTime){
-//
-//
-//        }
+        public SchedulerResult schedule(List<Process> processes, int contextSwitchTime){
+            while (completedProcesses < processes.size()){
+                //Add arriving processes
+                for (Process p : processes){
+                    if(p.arrivalTime < currentTime && p.remainingTime > 0 && p != currentRunningProcess && readyQueue.contains(p)){
+                        readyQueue.add(p);
+                    }
+                }
+
+                //Select process to run
+                if(currentRunningProcess == null || currentRunningProcess.remainingTime == 0){
+                    currentRunningProcess = selectNextProcess(readyQueue, currentRunningProcess);
+                    if(currentRunningProcess == null){
+                        currentTime++;
+                        continue;
+                    }
+                }
+
+                //Execute 1 time unit
+                currentRunningProcess.remainingTime--;
+                currentRunningProcess.quantumUsed++;
+
+                //Phase transition check
+                updatePhase(currentRunningProcess);
+
+                //Check stop conditions
+                if(!checkStopCondition(currentRunningProcess).equals("Continue")){
+                    handleProcessStop(currentRunningProcess, readyQueue, checkStopCondition(currentRunningProcess));
+                }
+
+                currentTime++;
+            }
+
+            // Phase Management
+
+        }
         // 3. Handle 4 scenarios when process stops:
         //    i. Used full quantum but not finished -> quantum += 2
         //    ii. Preempted in Priority phase -> quantum += ceil(remaining/2)
