@@ -72,6 +72,12 @@ public class CPUSchedulerSimulator {
 
     // ============ RESULTS CLASS ============
     static class SchedulerResult {
+        List<String> executionOrder = new ArrayList<>();
+        Map<String, Integer> waitingTimes = new HashMap<>();
+        Map<String, Integer> turnaroundTimes = new HashMap<>();
+        double avgWaitingTime;
+        double avgTurnaroundTime;
+        Map<String, List<Integer>> quantumHistory; // For AG only
         // TODO: Store execution order as List<String>
         // TODO: Store waiting times per process
         // TODO: Store turnaround times per process
@@ -141,122 +147,216 @@ public class CPUSchedulerSimulator {
     static class AGScheduler extends Scheduler {
         // TODO: MEMBER 4 - CORE LOGIC:
         // 1. Initialize AG-specific fields for each process
-        private int AG_quantum;
-        private int AG_originalQuantum;
-        private int quntumUsed;
-        private int currentPhase;
-        private int phaseStartTime;
+        private int quantumUsed;
         private int currentTime;
+        private int contextSwitchTime;
         private int completedProcesses;
         Process currentRunningProcess;
-        private ArrayList<Integer> quantumHistory;
-        private static int FCFS_PHASE = 1;
-        private static int PRIORITY_PHASE = 2;
-        private static int SJF_PHASE = 3;
-
+        private static final int FCFS_PHASE = 1;
+        private static final int PRIORITY_PHASE = 2;
+        private static final int SJF_PHASE = 3;
         //queue for ready processes
         private Queue<Process> readyQueue;
         //for tracking quantum history for all processes
-        private Map<String, List<Integer>> quantumHistories = new HashMap<>();
+        private Map<String, List<Integer>> quantumHistories;
 
         AGScheduler(List<Process> processes){
-            for (Process p : processes){
-                this.AG_quantum = p.quantum;
-                this.AG_originalQuantum = p.originalQuantum;
-                this.quntumUsed = 0;
-                this.currentPhase = FCFS_PHASE;
-                this.phaseStartTime = 0;
-                this.quantumHistory = new ArrayList<>(p.quantum);
-            }
+            this.processes = processes;
+            quantumHistories = new HashMap<>();
             currentTime = 0;
             completedProcesses = 0;
+            this.readyQueue = new LinkedList<>();
+            for (Process p : processes){
+                quantumHistories.put(p.name, new ArrayList<>());
+                quantumHistories.get(p.name).add(p.quantum); // storing initial quantum
+                this.quantumUsed = 0;
+            }
             //Sort all processes by arrival time
             processes.sort(Comparator.comparingInt(p -> p.arrivalTime));
-            this.readyQueue = new LinkedList<>();
             currentRunningProcess = null;
         }
 
-        private int calculatePhaseBoundry(int quantum, int percentage){
-            double value = (quantum * percentage) / 100.0;
-            return (int) Math.ceil(value);
-        }
+        SchedulerResult schedule(List<Process> processes, int contextSwitchTime){
+            this.contextSwitchTime = contextSwitchTime;
+            SchedulerResult result = new SchedulerResult();
+            result.executionOrder = new ArrayList<>();
+            result.quantumHistory = new HashMap<>();
 
-        public Process selectNextProcess(Queue<Process> readyQueue, AGScheduler currentProcess){
-            if(readyQueue.isEmpty()) return null;
-            else if(currentProcess != null &&(currentProcess.currentPhase == FCFS_PHASE || currentProcess.currentPhase == PRIORITY_PHASE)){
+            while (completedProcesses < processes.size()){
+                //Add arriving processes
+                for (Process p : processes){
+                    if(p.arrivalTime <= currentTime && p.remainingTime > 0 && p != currentRunningProcess && !readyQueue.contains(p)){
+                        readyQueue.add(p);
+                    }
+                }
+
+                //Select next process to run
+                if(currentRunningProcess == null || currentRunningProcess.remainingTime == 0){
+                    if(currentRunningProcess != null && currentRunningProcess.remainingTime == 0){
+                        handleCompletion(currentRunningProcess, currentTime);
+                        completedProcesses++;
+                    }
+                    Process nextProcess = selectNextProcess(currentRunningProcess);
+
+                    //Context Switch
+                    if(nextProcess != null && currentRunningProcess != null
+                            && currentRunningProcess != nextProcess
+                            && contextSwitchTime > 0){
+                        currentTime += contextSwitchTime;
+                        result.executionOrder.add("[CS]");
+                    }
+
+                    currentRunningProcess = nextProcess;
+
+                }
+
+                //Execute current process for 1 time unit
+                if(currentRunningProcess != null){
+                    currentRunningProcess.remainingTime--;
+                    currentRunningProcess.quantumUsed++;
+                    result.executionOrder.add(currentRunningProcess.name);
+                    String stopReason = checkStopCondition(currentRunningProcess);
+
+                    if (!stopReason.equals("Continue")){
+                        handleProcessStop(currentRunningProcess, stopReason, result);
+
+                        if (stopReason.equals("Completed")){
+                            completedProcesses++;
+                            currentRunningProcess = null;
+                        } else {
+                            currentRunningProcess.quantumUsed = 0;
+                            readyQueue.add(currentRunningProcess); //process goes back to queue
+                            currentRunningProcess = null;
+                        }
+                    }
+                }
+
+                currentTime++; //move to next time unit
 
             }
+            // Rofida's part will be integrated here
+            calculateMetrics(processes, result);
+
+            result.quantumHistory = quantumHistories;
+            return result;
         }
 
-        public int updatePhase(Process process){
-            int phase1Boundry = calculatePhaseBoundry(AG_quantum, 25);
-            int phase2Boundry = calculatePhaseBoundry(AG_quantum, 50);
+        //=======Helper Functions========
 
-            if(quntumUsed < phase1Boundry){
+        private int getCurrentPhase(Process process){
+            if (process == null) return 0;
+
+            int phase1End = (int) Math.ceil(process.quantum * 0.25);
+            int phase2End = (int) Math.ceil(process.quantum * 0.50);
+
+            if(process.quantumUsed < phase1End){
                 return FCFS_PHASE;
-            } else if (quntumUsed < phase2Boundry){
+            } else if (process.quantumUsed < phase2End){
                 return PRIORITY_PHASE;
             } else{
                 return SJF_PHASE;
             }
         }
 
-        public String checkStopCondition(Process process){
+        private Process selectNextProcess(Process currentProcess){
+            if(readyQueue.isEmpty()) return null;
 
-        }
+            if (currentProcess != null){
+                int currentPhase = getCurrentPhase(currentProcess);
 
-        public void handleProcessStop(Process process, Queue<Process> readyQueue, String stopReason){
-
-        }
-
-        // 2. Implement 3-phase scheduling logic:
-        //    - First 25% of quantum: FCFS (non-preemptive)
-        //    - Next 25%: Non-preemptive Priority
-        //    - Remaining 50%: Preemptive SJF
-
-        public SchedulerResult schedule(List<Process> processes, int contextSwitchTime){
-            while (completedProcesses < processes.size()){
-                //Add arriving processes
-                for (Process p : processes){
-                    if(p.arrivalTime < currentTime && p.remainingTime > 0 && p != currentRunningProcess && readyQueue.contains(p)){
-                        readyQueue.add(p);
+                if (currentPhase == FCFS_PHASE || currentPhase == PRIORITY_PHASE){
+                    return currentProcess; // continue same process (these two phases are non_preemtive)
+                }
+                if(currentPhase == SJF_PHASE){ //this phase is preemtive
+                    Process shortest = findShortestJob();
+                    if(shortest != null && shortest != currentProcess){
+                        return shortest;
                     }
+                    return currentProcess;
                 }
-
-                //Select process to run
-                if(currentRunningProcess == null || currentRunningProcess.remainingTime == 0){
-                    currentRunningProcess = selectNextProcess(readyQueue, currentRunningProcess);
-                    if(currentRunningProcess == null){
-                        currentTime++;
-                        continue;
-                    }
-                }
-
-                //Execute 1 time unit
-                currentRunningProcess.remainingTime--;
-                currentRunningProcess.quantumUsed++;
-
-                //Phase transition check
-                updatePhase(currentRunningProcess);
-
-                //Check stop conditions
-                if(!checkStopCondition(currentRunningProcess).equals("Continue")){
-                    handleProcessStop(currentRunningProcess, readyQueue, checkStopCondition(currentRunningProcess));
-                }
-
-                currentTime++;
             }
-
-            // Phase Management
-
+            return readyQueue.poll();
         }
-        // 3. Handle 4 scenarios when process stops:
-        //    i. Used full quantum but not finished -> quantum += 2
-        //    ii. Preempted in Priority phase -> quantum += ceil(remaining/2)
-        //    iii. Preempted in SJF phase -> quantum += remaining
-        //    iv. Finished before quantum ends -> quantum = 0
-        // 4. Track phase transitions
-        // 5. Manage ready queue
+
+        private Process findShortestJob(){
+            Process shortest = null;
+            int minTime = Integer.MAX_VALUE;
+
+            for (Process p : readyQueue){
+                if(p.remainingTime < minTime){
+                    minTime = p.remainingTime;
+                    shortest = p;
+                }
+            }
+            return shortest;
+        }
+
+
+        private String checkStopCondition(Process process){
+            //case 4 : process finished its work
+            if (process.remainingTime == 0){
+                return "Completed";
+            }
+            // case 1 : process used all its quantum, but still has work
+            if (process.quantumUsed >= process.quantum){
+                return "Quantum_Expired";
+            }
+            int currentPhase = getCurrentPhase(process);
+
+            //case 3 : process in SJF phase and shorter job available
+            if (currentPhase == SJF_PHASE){
+                Process shortest = findShortestJob();
+                if (shortest != null && shortest != process){
+                    return "SJF_Preempted";
+                }
+            }
+            //case 2 : process in priority phase and higher priority arrives
+            if (currentPhase == PRIORITY_PHASE){
+
+            }
+            return "Continue";
+        }
+
+        private void handleProcessStop(Process process, String stopReason, SchedulerResult result){
+            int oldQuantum = process.quantum;
+
+            switch (stopReason){
+                // used all quantum but not finished
+                case "Quantum_Expired":
+                   process.quantum += 2;
+                    System.out.println(process.name + ": Quantum " + oldQuantum + "->" + process.quantum + "(+2, full quantum used)");
+                    break;
+                // preempted in priority phase
+                case "Priority_Preempted":
+                    int remaining = process.quantum - process.quantumUsed;
+                    int increase = (int) Math.ceil(remaining / 2.0);
+                    process.quantum += increase;
+                    System.out.println(process.name + ": Quantum " + oldQuantum + "->" + process.quantum + " (+" + increase + ", priority preempted");
+                    break;
+                // preempted in SJF phase
+                case "SJF_Preempted":
+                    remaining = process.quantum - process.quantumUsed;
+                    process.quantum += remaining;
+                    System.out.println(process.name + ": Quantum " + oldQuantum + " → " +
+                            process.quantum + " (+" + remaining + ", SJF preempted)");
+                    break;
+                // finished before quantum ended
+                case "Completed":
+                    process.quantum = 0;
+                    System.out.println(process.name + ": Quantum " + oldQuantum + " → 0 (completed)");
+                    break;
+
+            }
+            // update quantum in history
+            if (oldQuantum != process.quantum){
+                quantumHistories.get(process.name).add(process.quantum);
+            }
+            process.quantumUsed = 0; // reset for next time
+
+            if (!stopReason.equals("Completed")){
+                readyQueue.add(process); // add back to ready queue if not completed
+            }
+        }
 
         // TODO: MEMBER 5 - METRICS & INTEGRATION:
         // 1. Track quantum history updates
@@ -264,5 +364,14 @@ public class CPUSchedulerSimulator {
         // 3. Integrate with main simulator
         // 4. Ensure proper output formatting
         // 5. Return complete SchedulerResult with quantum history
+
+        private void handleCompletion(Process process, int time){
+
+        }
+
+        private void calculateMetrics(List<Process> processes, SchedulerResult result){
+
+        }
+
     }
 }
